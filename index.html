@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>セリフ付き縦スクロールSTG</title>
+    <title>ボイス付き縦スクロールSTG</title>
     <style>
         body {
             margin: 0;
@@ -30,7 +30,7 @@
             display: block;
         }
         #sidebar {
-            width: 250px;
+            width: 280px;
             background: #1a1a2e;
             border-left: 2px solid #555;
             display: flex;
@@ -39,7 +39,7 @@
             box-sizing: border-box;
         }
         h2 {
-            font-size: 18px;
+            font-size: 16px;
             margin-top: 0;
             border-bottom: 1px solid #444;
             padding-bottom: 8px;
@@ -50,26 +50,35 @@
             background: #0f0f1a;
             border: 1px solid #333;
             padding: 10px;
-            overflow-y: auto;
-            font-size: 13px;
+            overflow-y: hidden; /* スクロールバーを隠しすっきりさせる */
             display: flex;
-            flex-direction: column-reverse; /* 新しいログを上に */
+            flex-direction: column; /* 上から古い順、下が最新 */
+            justify-content: flex-end; /* 常に下詰めで表示 */
         }
         .log-item {
             margin-bottom: 8px;
             border-left: 3px solid #ff5555;
-            padding-left: 6px;
-            animation: fadeIn 0.3s;
+            padding-left: 8px;
+            animation: fadeIn 0.2s ease-out;
+            font-size: 13px;
+            line-height: 1.4;
         }
         .log-time {
             font-size: 10px;
             color: #888;
+            margin-bottom: 2px;
         }
         #info {
             margin-top: 10px;
-            font-size: 12px;
+            font-size: 11px;
             color: #aaa;
-            line-height: 1.4;
+            line-height: 1.5;
+            border-top: 1px solid #333;
+            padding-top: 8px;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
         }
     </style>
 </head>
@@ -80,12 +89,12 @@
         <canvas id="gameCanvas" width="400" height="600"></canvas>
     </div>
     <div id="sidebar">
-        <h2>通信・敵セリフ</h2>
+        <h2>通信・敵ボイスログ</h2>
         <div id="dialogue-area"></div>
         <div id="info">
             [操作]<br>
-            矢印キー: 移動<br>
-            スペース: ショット
+            矢印キー: 移動 / スペースキー: ショット<br><br>
+            ※ブラウザの仕様上、画面を一度クリックするかキーを押すまで音声が再生されない場合があります。
         </div>
     </div>
 </div>
@@ -95,19 +104,19 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const dialogueArea = document.getElementById('dialogue-area');
 
-// プレイヤー
-let player = { x: 200, y: 500, size: 20, speed: 4, color: '#00ffcc' };
+// ゲーム状態
+let player = { x: 200, y: 500, size: 20, speed: 5, color: '#00ffcc' };
 let keys = {};
 let bullets = [];
 let enemies = [];
-let enemyBullets = [];
 let score = 0;
+let MAX_LOGS = 6; // ウィンドウに表示する最大ログ数
 
 // キー入力
 window.addEventListener('keydown', e => { keys[e.code] = true; });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-// 弾発射
+// 弾発射タイマー
 let shootTimer = 0;
 function handlePlayerInput() {
     if (keys['ArrowLeft'] && player.x > player.size) player.x -= player.speed;
@@ -116,25 +125,41 @@ function handlePlayerInput() {
     if (keys['ArrowDown'] && player.y < canvas.height - player.size) player.y += player.speed;
 
     shootTimer++;
-    if (keys['Space'] && shootTimer % 10 === 0) {
-        bullets.push({ x: player.x, y: player.y - 10, width: 4, height: 12, speed: 8 });
+    if (keys['Space'] && shootTimer % 8 === 0) {
+        bullets.push({ x: player.x, y: player.y - 10, width: 4, height: 12, speed: 9 });
     }
 }
 
-// セリフ追加関数
-function addDialogue(text) {
+// 音声合成（Web Speech API）とログ追加
+function speakAndLog(text) {
+    // 1. 画面のログ追加・古いログの削除
     const div = document.createElement('div');
     div.className = 'log-item';
-    div.innerHTML = `<div class="log-time">ENEMY COM</div>${text}`;
-    dialogueArea.prepend(div);
+    div.innerHTML = `<div class="log-time">ENEMY BOSS</div>${text}`;
+    dialogueArea.appendChild(div);
+
+    // ログが多すぎる場合は古いものを削除
+    while (dialogueArea.children.length > MAX_LOGS) {
+        dialogueArea.removeChild(dialogueArea.firstChild);
+    }
+
+    // 2. 音声再生（直前の音声をキャンセルして最新を被せる）
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel(); // 連続で喋るときは前の音声を遮る
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'ja-JP';
+        utterance.pitch = 0.6; // 少し低めのボスっぽい声に調整
+        utterance.rate = 1.1;  // テンポよく喋らせる
+        window.speechSynthesis.speak(utterance);
+    }
 }
 
-// 敵のセリフパターン
+// セリフパターン
 const dialogueList = {
-    appear: ["「ふはは！我らの襲来を防げると思うな！」", "「地球圏の雑魚め、消し去ってくれる！」", "「我が艦隊の露と消えろ！」"],
-    damaged: ["「ぐあっ！2発目が当たっただと！？」", "「小賢しい真似を…！」", "「機体に被弾！？調子にのるなよ！」", "「おのれ…今の攻撃は効いたぞ！」"],
-    halfHp: ["「ええい！お前、なかなかやるな…！」", "「この私が手こずるとは…！」"],
-    defeated: ["「バカな…私が討たれるとは…ッ！」", "「撤退だ…おぼえておれ！」", "「これが…地球の力か…があっ！」"]
+    appear: ["「ふはは！我らの襲来を防げると思うな！」", "「地球圏の雑魚め、消し去ってくれる！」"],
+    damaged: ["「ぐあっ！小賢しい！」", "「機体に被弾だと！？」", "「おのれ、調子に乗るな！」"],
+    halfHp: ["「ええい！この私が手こずるとは…！」", "「お前、なかなかやるな…！」"],
+    defeated: ["「バカな…私が討たれるとは…ッ！」", "「撤退だ…おぼえておれ！」"]
 };
 
 function getRandomDialogue(type) {
@@ -146,19 +171,20 @@ function getRandomDialogue(type) {
 let spawnTimer = 0;
 function spawnEnemies() {
     spawnTimer++;
-    if (spawnTimer % 80 === 0) {
-        let e = {
+    // 画面に敵が多すぎないよう調整（最大3機）
+    if (spawnTimer % 120 === 0 && enemies.length < 3) {
+        enemies.push({
             x: Math.random() * 320 + 40,
             y: -30,
-            size: 20,
-            speed: 1.5,
-            hp: 6,
-            maxHp: 6,
+            size: 22,
+            speed: 1.2,
+            hp: 8,
+            maxHp: 8,
             color: '#ff4444',
             hasSpokenAppear: false,
-            hasSpokenHalf: false
-        };
-        enemies.push(e);
+            hasSpokenHalf: false,
+            voiceCooldown: 0 // 連投防止用タイマー
+        });
     }
 }
 
@@ -167,7 +193,7 @@ function update() {
     handlePlayerInput();
     spawnEnemies();
 
-    // プレイヤーの弾
+    // プレイヤーの弾移動と判定
     for (let i = bullets.length - 1; i >= 0; i--) {
         bullets[i].y -= bullets[i].speed;
         if (bullets[i].y < 0) {
@@ -175,43 +201,52 @@ function update() {
             continue;
         }
 
-        // 敵との当たり判定
         for (let j = enemies.length - 1; j >= 0; j--) {
             let e = enemies[j];
             let dist = Math.hypot(bullets[i].x - e.x, bullets[i].y - e.y);
+            
             if (dist < e.size + bullets[i].width) {
-                // 被弾
                 e.hp--;
                 bullets.splice(i, 1);
 
-                // 状況に応じたセリフ
+                // 死亡時セリフ（最優先）
                 if (e.hp <= 0) {
-                    addDialogue(getRandomDialogue('defeated'));
+                    speakAndLog(getRandomDialogue('defeated'));
                     enemies.splice(j, 1);
                     score += 100;
-                } else if (e.hp === 3 && !e.hasSpokenHalf) {
+                } 
+                // HP半分時セリフ（1回のみ、かつクールダウン中ではない）
+                else if (e.hp <= e.maxHp / 2 && !e.hasSpokenHalf && e.voiceCooldown === 0) {
                     e.hasSpokenHalf = true;
-                    addDialogue(getRandomDialogue('halfHp'));
-                } else {
-                    addDialogue(getRandomDialogue('damaged'));
+                    e.voiceCooldown = 90; // 約1.5秒は次の被弾セリフを喋らない
+                    speakAndLog(getRandomDialogue('halfHp'));
+                } 
+                // 通常被弾セリフ（クールダウンが0のときだけ喋る）
+                else if (e.voiceCooldown === 0) {
+                    e.voiceCooldown = 120; // 約2秒間のクールダウン
+                    speakAndLog(getRandomDialogue('damaged'));
                 }
                 break;
             }
         }
     }
 
-    // 敵の移動
+    // 敵の移動とタイマー減少
     for (let i = enemies.length - 1; i >= 0; i--) {
-        enemies[i].y += enemies[i].speed;
+        let e = enemies[i];
+        e.y += e.speed;
         
-        // 出現時セリフ
-        if (!enemies[i].hasSpokenAppear && enemies[i].y > 30) {
-            enemies[i].hasSpokenAppear = true;
-            addDialogue(getRandomDialogue('appear'));
+        // クールダウンタイマーのカウントダウン
+        if (e.voiceCooldown > 0) e.voiceCooldown--;
+
+        // 出現時のセリフ（画面に入ってから少し経ってから）
+        if (!e.hasSpokenAppear && e.y > 40) {
+            e.hasSpokenAppear = true;
+            e.voiceCooldown = 90; // 出現直後の連続セリフを防ぐ
+            speakAndLog(getRandomDialogue('appear'));
         }
 
-        // 画面外へ
-        if (enemies[i].y > canvas.height + 50) {
+        if (e.y > canvas.height + 50) {
             enemies.splice(i, 1);
         }
     }
@@ -221,11 +256,13 @@ function update() {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 背景の星
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 2, 2);
+    // 背景（簡易アニメーション星屑）
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    for(let i=0; i<5; i++) {
+        ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 2, 2);
+    }
 
-    // プレイヤー描画
+    // 自機
     ctx.fillStyle = player.color;
     ctx.beginPath();
     ctx.moveTo(player.x, player.y - player.size);
@@ -234,39 +271,35 @@ function draw() {
     ctx.closePath();
     ctx.fill();
 
-    // プレイヤーの弾描画
+    // 自機の弾
     ctx.fillStyle = '#00ffff';
-    bullets.forEach(b => {
-        ctx.fillRect(b.x - b.width/2, b.y, b.width, b.height);
-    });
+    bullets.forEach(b => ctx.fillRect(b.x - b.width/2, b.y, b.width, b.height));
 
-    // 敵描画
+    // 敵機
     enemies.forEach(e => {
         ctx.fillStyle = e.color;
         ctx.beginPath();
         ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2);
         ctx.fill();
 
-        // 小型HPバー
-        ctx.fillStyle = '#555';
-        ctx.fillRect(e.x - 15, e.y - 28, 30, 4);
-        ctx.fillStyle = '#0f0';
-        ctx.fillRect(e.x - 15, e.y - 28, 30 * (e.hp / e.maxHp), 4);
+        // HPバー
+        ctx.fillStyle = '#444';
+        ctx.fillRect(e.x - 18, e.y - 30, 36, 5);
+        ctx.fillStyle = e.voiceCooldown > 0 ? '#ffaa00' : '#00ff00'; // クールダウン中はバーの色を変えて可視化（デバッグ用、必要に応じ緑固定にしてください）
+        ctx.fillRect(e.x - 18, e.y - 30, 36 * (e.hp / e.maxHp), 5);
     });
 
-    // スコア表示
+    // スコア
     ctx.fillStyle = '#fff';
-    ctx.font = '14px sans-serif';
-    ctx.fillText(`SCORE: ${score}`, 15, 25);
+    ctx.font = '16px sans-serif';
+    ctx.fillText(`SCORE: ${score}`, 15, 30);
 }
 
-// メインループ
 function loop() {
     update();
     draw();
     requestAnimationFrame(loop);
 }
-
 loop();
 </script>
 

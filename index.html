@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>セリフ付き縦スクロールSTG</title>
+    <style>
+        body {
+            margin: 0;
+            background: #111;
+            color: #fff;
+            font-family: sans-serif;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+            justify-content: center;
+            align-items: center;
+        }
+        #game-container {
+            display: flex;
+            border: 2px solid #555;
+            background: #000;
+        }
+        #canvas-box {
+            position: relative;
+            width: 400px;
+            height: 600px;
+        }
+        canvas {
+            background: #050515;
+            display: block;
+        }
+        #sidebar {
+            width: 250px;
+            background: #1a1a2e;
+            border-left: 2px solid #555;
+            display: flex;
+            flex-direction: column;
+            padding: 15px;
+            box-sizing: border-box;
+        }
+        h2 {
+            font-size: 18px;
+            margin-top: 0;
+            border-bottom: 1px solid #444;
+            padding-bottom: 8px;
+            color: #00ffcc;
+        }
+        #dialogue-area {
+            flex: 1;
+            background: #0f0f1a;
+            border: 1px solid #333;
+            padding: 10px;
+            overflow-y: auto;
+            font-size: 13px;
+            display: flex;
+            flex-direction: column-reverse; /* 新しいログを上に */
+        }
+        .log-item {
+            margin-bottom: 8px;
+            border-left: 3px solid #ff5555;
+            padding-left: 6px;
+            animation: fadeIn 0.3s;
+        }
+        .log-time {
+            font-size: 10px;
+            color: #888;
+        }
+        #info {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #aaa;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="canvas-box">
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+    </div>
+    <div id="sidebar">
+        <h2>通信・敵セリフ</h2>
+        <div id="dialogue-area"></div>
+        <div id="info">
+            [操作]<br>
+            矢印キー: 移動<br>
+            スペース: ショット
+        </div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const dialogueArea = document.getElementById('dialogue-area');
+
+// プレイヤー
+let player = { x: 200, y: 500, size: 20, speed: 4, color: '#00ffcc' };
+let keys = {};
+let bullets = [];
+let enemies = [];
+let enemyBullets = [];
+let score = 0;
+
+// キー入力
+window.addEventListener('keydown', e => { keys[e.code] = true; });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// 弾発射
+let shootTimer = 0;
+function handlePlayerInput() {
+    if (keys['ArrowLeft'] && player.x > player.size) player.x -= player.speed;
+    if (keys['ArrowRight'] && player.x < canvas.width - player.size) player.x += player.speed;
+    if (keys['ArrowUp'] && player.y > player.size) player.y -= player.speed;
+    if (keys['ArrowDown'] && player.y < canvas.height - player.size) player.y += player.speed;
+
+    shootTimer++;
+    if (keys['Space'] && shootTimer % 10 === 0) {
+        bullets.push({ x: player.x, y: player.y - 10, width: 4, height: 12, speed: 8 });
+    }
+}
+
+// セリフ追加関数
+function addDialogue(text) {
+    const div = document.createElement('div');
+    div.className = 'log-item';
+    div.innerHTML = `<div class="log-time">ENEMY COM</div>${text}`;
+    dialogueArea.prepend(div);
+}
+
+// 敵のセリフパターン
+const dialogueList = {
+    appear: ["「ふはは！我らの襲来を防げると思うな！」", "「地球圏の雑魚め、消し去ってくれる！」", "「我が艦隊の露と消えろ！」"],
+    damaged: ["「ぐあっ！2発目が当たっただと！？」", "「小賢しい真似を…！」", "「機体に被弾！？調子にのるなよ！」", "「おのれ…今の攻撃は効いたぞ！」"],
+    halfHp: ["「ええい！お前、なかなかやるな…！」", "「この私が手こずるとは…！」"],
+    defeated: ["「バカな…私が討たれるとは…ッ！」", "「撤退だ…おぼえておれ！」", "「これが…地球の力か…があっ！」"]
+};
+
+function getRandomDialogue(type) {
+    const arr = dialogueList[type];
+    return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// 敵の生成
+let spawnTimer = 0;
+function spawnEnemies() {
+    spawnTimer++;
+    if (spawnTimer % 80 === 0) {
+        let e = {
+            x: Math.random() * 320 + 40,
+            y: -30,
+            size: 20,
+            speed: 1.5,
+            hp: 6,
+            maxHp: 6,
+            color: '#ff4444',
+            hasSpokenAppear: false,
+            hasSpokenHalf: false
+        };
+        enemies.push(e);
+    }
+}
+
+// 更新処理
+function update() {
+    handlePlayerInput();
+    spawnEnemies();
+
+    // プレイヤーの弾
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        bullets[i].y -= bullets[i].speed;
+        if (bullets[i].y < 0) {
+            bullets.splice(i, 1);
+            continue;
+        }
+
+        // 敵との当たり判定
+        for (let j = enemies.length - 1; j >= 0; j--) {
+            let e = enemies[j];
+            let dist = Math.hypot(bullets[i].x - e.x, bullets[i].y - e.y);
+            if (dist < e.size + bullets[i].width) {
+                // 被弾
+                e.hp--;
+                bullets.splice(i, 1);
+
+                // 状況に応じたセリフ
+                if (e.hp <= 0) {
+                    addDialogue(getRandomDialogue('defeated'));
+                    enemies.splice(j, 1);
+                    score += 100;
+                } else if (e.hp === 3 && !e.hasSpokenHalf) {
+                    e.hasSpokenHalf = true;
+                    addDialogue(getRandomDialogue('halfHp'));
+                } else {
+                    addDialogue(getRandomDialogue('damaged'));
+                }
+                break;
+            }
+        }
+    }
+
+    // 敵の移動
+    for (let i = enemies.length - 1; i >= 0; i--) {
+        enemies[i].y += enemies[i].speed;
+        
+        // 出現時セリフ
+        if (!enemies[i].hasSpokenAppear && enemies[i].y > 30) {
+            enemies[i].hasSpokenAppear = true;
+            addDialogue(getRandomDialogue('appear'));
+        }
+
+        // 画面外へ
+        if (enemies[i].y > canvas.height + 50) {
+            enemies.splice(i, 1);
+        }
+    }
+}
+
+// 描画処理
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // 背景の星
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(Math.random() * canvas.width, Math.random() * canvas.height, 2, 2);
+
+    // プレイヤー描画
+    ctx.fillStyle = player.color;
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y - player.size);
+    ctx.lineTo(player.x - player.size, player.y + player.size);
+    ctx.lineTo(player.x + player.size, player.y + player.size);
+    ctx.closePath();
+    ctx.fill();
+
+    // プレイヤーの弾描画
+    ctx.fillStyle = '#00ffff';
+    bullets.forEach(b => {
+        ctx.fillRect(b.x - b.width/2, b.y, b.width, b.height);
+    });
+
+    // 敵描画
+    enemies.forEach(e => {
+        ctx.fillStyle = e.color;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.size, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 小型HPバー
+        ctx.fillStyle = '#555';
+        ctx.fillRect(e.x - 15, e.y - 28, 30, 4);
+        ctx.fillStyle = '#0f0';
+        ctx.fillRect(e.x - 15, e.y - 28, 30 * (e.hp / e.maxHp), 4);
+    });
+
+    // スコア表示
+    ctx.fillStyle = '#fff';
+    ctx.font = '14px sans-serif';
+    ctx.fillText(`SCORE: ${score}`, 15, 25);
+}
+
+// メインループ
+function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+
+</body>
+</html>
